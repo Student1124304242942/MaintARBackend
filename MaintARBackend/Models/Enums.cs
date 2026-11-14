@@ -1,12 +1,5 @@
 namespace MaintARBackend.Models;
 
-/// <summary>Для чего выдан код из письма.</summary>
-public enum CodePurpose
-{
-    EmailVerification,
-    PasswordReset
-}
-
 /// <summary>Состояние проверки: анализ на сервере ИИ может идти долго или упасть.</summary>
 public enum InspectionStatus
 {

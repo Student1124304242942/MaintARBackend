@@ -1,30 +1,26 @@
-using MaintARBackend.Models;
 using Microsoft.AspNetCore.Identity;
+using MaintARBackend.Models;
 
 namespace MaintARBackend.Services.Auth;
 
 public interface IPasswordService
 {
-    /// <summary>Хеширует пароль или одноразовый код.</summary>
-    string Hash(User user, string value);
+    string HashPassword(User user, string password);
 
-    /// <summary>Сверяет значение с ранее сохранённым хешем.</summary>
-    bool Verify(User user, string hash, string value);
+    PasswordVerificationResult VerifyPassword(User user, string hashedPassword, string providedPassword);
 }
 
 internal sealed class PasswordService : IPasswordService
 {
     private readonly PasswordHasher<User> _passwordHasher = new();
 
-    public string Hash(User user, string value)
+    public string HashPassword(User user, string password)
     {
-        return _passwordHasher.HashPassword(user, value);
+        return _passwordHasher.HashPassword(user, password);
     }
 
-    public bool Verify(User user, string hash, string value)
+    public PasswordVerificationResult VerifyPassword(User user, string hashedPassword, string providedPassword)
     {
-        var result = _passwordHasher.VerifyHashedPassword(user, hash, value);
-
-        return result != PasswordVerificationResult.Failed;
+        return _passwordHasher.VerifyHashedPassword(user, hashedPassword, providedPassword);
     }
 }

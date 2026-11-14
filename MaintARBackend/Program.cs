@@ -1,58 +1,43 @@
 using System.Text;
-using MaintARBackend.Context;
-using MaintARBackend.Middleware;
-using MaintARBackend.Services.Auth;
-using MaintARBackend.Services.Email;
-using Resend;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using Resend;
+using MaintARBackend.Context;
+using MaintARBackend.Middleware;
+using MaintARBackend.Services.Auth;
+using MaintARBackend.Services.Email;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Ключ подписи токенов лежит в пользовательских секретах, а не в репозитории.
-var jwtKey = builder.Configuration["Jwt:Key"];
-if (string.IsNullOrWhiteSpace(jwtKey) || Encoding.UTF8.GetByteCount(jwtKey) < 32)
-{
-    throw new InvalidOperationException(
-        "Не задан Jwt:Key (нужно не меньше 32 символов). Задайте его командой: dotnet user-secrets set \"Jwt:Key\" \"<ключ>\"");
-}
+// Локальные секреты (ключи JWT и Resend). Файл не попадает в git.
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
-builder.Services.AddControllers();
+// Add services to the container.
+
+builder.Services.AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
-
-builder.Services.AddScoped<IPasswordService, PasswordService>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
-builder.Services.AddScoped<IVerificationCodeService, VerificationCodeService>();
-builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IPasswordService, PasswordService>();
+builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IPasswordResetService, PasswordResetService>();
+builder.Services.AddScoped<IEmailVerificationService, EmailVerificationService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 
-// Письма идут через Resend. Без токена в режиме разработки код пишется в консоль сервера.
+// Наш ИИ-сервер, адрес в appsettings (AiService:BaseUrl).
+builder.Services.AddHttpClient<MaintARBackend.Services.Ai.IAiAnalysisClient, MaintARBackend.Services.Ai.AiAnalysisClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["AiService:BaseUrl"] ?? "http://localhost:8000/");
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+
 var resendToken = builder.Configuration["Resend:ApiToken"];
-if (!string.IsNullOrWhiteSpace(resendToken))
-{
-    builder.Services.AddOptions();
-    builder.Services.AddHttpClient<ResendClient>();
-    builder.Services.Configure<ResendClientOptions>(options =>
-    {
-        options.ApiToken = resendToken;
-
-        // Если Resend отказал в отправке, это должно быть ошибкой, а не молчаливым успехом.
-        options.ThrowExceptions = true;
-    });
-    builder.Services.AddTransient<IResend, ResendClient>();
-    builder.Services.AddScoped<IEmailService, ResendEmailService>();
-}
-else if (builder.Environment.IsDevelopment())
-{
-    builder.Services.AddScoped<IEmailService, ConsoleEmailService>();
-}
-else
-{
-    throw new InvalidOperationException(
-        "Не задан Resend:ApiToken. Задайте его командой: dotnet user-secrets set \"Resend:ApiToken\" \"<токен>\"");
-}
+if (string.IsNullOrWhiteSpace(resendToken))
+    throw new InvalidOperationException("Resend:ApiToken не задан (user-secrets)");
+builder.Services.AddResend(resendToken);
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -64,20 +49,30 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidAudience = builder.Configuration["Jwt:Audience"],
             ValidateLifetime = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)),
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
         };
     });
 
+// Доступ к рабочему функционалу только с подтверждённой почтой.
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("EmailVerified", policy => policy.RequireClaim("email_verified", "true"));
+});
+
+// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
+        Name = "Authorization",
         Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
+        Scheme = "Bearer",
         BearerFormat = "JWT",
-        Description = "Вставь сюда только сам токен, без слова Bearer"
+        In = ParameterLocation.Header,
+        Description = "Вставь сюда только сам токен, без слова Bearer — Swagger добавит его сам"
     });
 
     options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
@@ -90,8 +85,14 @@ var app = builder.Build();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
+// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
+    using (var scope = app.Services.CreateScope())
+    {
+        await DevDataSeeder.SeedAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+    }
+
     app.UseSwagger();
     app.UseSwaggerUI();
 }

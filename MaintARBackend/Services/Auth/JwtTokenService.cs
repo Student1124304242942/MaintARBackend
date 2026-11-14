@@ -1,14 +1,13 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using MaintARBackend.Models;
 using Microsoft.IdentityModel.Tokens;
 
 namespace MaintARBackend.Services.Auth;
 
 public interface IJwtTokenService
 {
-    string GenerateToken(User user);
+    string GenerateToken(string userId, string username, IEnumerable<Claim>? additionalClaims = null);
 }
 
 internal sealed class JwtTokenService : IJwtTokenService
@@ -20,16 +19,24 @@ internal sealed class JwtTokenService : IJwtTokenService
         _configuration = configuration;
     }
 
-    public string GenerateToken(User user)
+    public string GenerateToken(string userId, string username, IEnumerable<Claim>? additionalClaims = null)
     {
         var claims = new List<Claim>
         {
-            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new(ClaimTypes.Name, user.UserName),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new Claim(ClaimTypes.NameIdentifier, userId),
+            new Claim(ClaimTypes.Name, username),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
+        if (additionalClaims != null)
+        {
+            claims.AddRange(additionalClaims);
+        }
+
+        var key = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
+
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
@@ -37,7 +44,8 @@ internal sealed class JwtTokenService : IJwtTokenService
             audience: _configuration["Jwt:Audience"],
             claims: claims,
             expires: DateTime.UtcNow.AddMinutes(_configuration.GetValue<double>("Jwt:ExpireMinutes")),
-            signingCredentials: credentials);
+            signingCredentials: credentials
+        );
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }

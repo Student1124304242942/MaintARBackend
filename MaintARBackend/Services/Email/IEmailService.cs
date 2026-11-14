@@ -1,9 +1,10 @@
 using MaintARBackend.Models;
 
-namespace MaintARBackend.Services.Email;
-
-public interface IEmailService
+namespace MaintARBackend.Services.Email
 {
-    /// <summary>Отправляет письмо с одноразовым кодом.</summary>
-    Task SendCodeAsync(string to, CodePurpose purpose, string code);
+
+    public interface IEmailService
+    {
+        Task SendEmailAsync(EmailDto dto);
+    }
 }

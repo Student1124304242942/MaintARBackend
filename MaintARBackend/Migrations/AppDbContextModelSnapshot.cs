@@ -16,7 +16,7 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
     // If you encounter a merge conflict in the line below, it means you need to
     // discard one of the migration branches and recreate its migrations on top of
     // the other branch. See https://aka.ms/efcore-docs-migrations-conflicts for more info.
-    public override string LastMigrationId => "20261114104651_AddEmailVerificationAndPasswordReset";
+    public override string LastMigrationId => "20261114145535_SplitCodesLikeNeuronBackend";
 
     protected override void BuildModel(ModelBuilder modelBuilder)
     {
@@ -272,6 +272,32 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
                     });
             });
 
+        modelBuilder.Entity("MaintARBackend.Models.EmailVerificationCodeModel", b =>
+            {
+                var id = b.Property<int>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("int");
+
+                SqlServerPropertyBuilderExtensions.UseIdentityColumn(id);
+
+                b.Property<string>("CodeHash")
+                    .IsRequired()
+                    .HasColumnType("nvarchar(max)");
+
+                b.Property<DateTime>("ExpiresAt")
+                    .HasColumnType("datetime2");
+
+                b.Property<int>("UserId")
+                    .HasColumnType("int");
+
+                b.HasKey("Id");
+
+                b.HasIndex("UserId")
+                    .IsUnique();
+
+                b.ToTable("EmailVerificationCodes");
+            });
+
         modelBuilder.Entity("MaintARBackend.Models.Equipment", b =>
             {
                 var id = b.Property<int>("Id")
@@ -515,6 +541,32 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
                 b.ToTable("MaintenanceRecords");
             });
 
+        modelBuilder.Entity("MaintARBackend.Models.ResetPasswordCodeModel", b =>
+            {
+                var id = b.Property<int>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("int");
+
+                SqlServerPropertyBuilderExtensions.UseIdentityColumn(id);
+
+                b.Property<string>("CodeHash")
+                    .IsRequired()
+                    .HasColumnType("nvarchar(max)");
+
+                b.Property<DateTime>("ExpiresAt")
+                    .HasColumnType("datetime2");
+
+                b.Property<int>("UserId")
+                    .HasColumnType("int");
+
+                b.HasKey("Id");
+
+                b.HasIndex("UserId")
+                    .IsUnique();
+
+                b.ToTable("ResetPasswordCodes");
+            });
+
         modelBuilder.Entity("MaintARBackend.Models.User", b =>
             {
                 var id = b.Property<int>("Id")
@@ -548,43 +600,6 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
                 b.ToTable("Users");
             });
 
-        modelBuilder.Entity("MaintARBackend.Models.VerificationCode", b =>
-            {
-                var id = b.Property<int>("Id")
-                    .ValueGeneratedOnAdd()
-                    .HasColumnType("int");
-
-                SqlServerPropertyBuilderExtensions.UseIdentityColumn(id);
-
-                b.Property<string>("CodeHash")
-                    .IsRequired()
-                    .HasColumnType("nvarchar(max)");
-
-                b.Property<DateTime>("ExpiresAt")
-                    .HasColumnType("datetime2");
-
-                b.Property<int>("FailedAttempts")
-                    .HasColumnType("int");
-
-                b.Property<string>("Purpose")
-                    .IsRequired()
-                    .HasMaxLength(30)
-                    .HasColumnType("nvarchar(30)");
-
-                b.Property<DateTime>("SentAt")
-                    .HasColumnType("datetime2");
-
-                b.Property<int>("UserId")
-                    .HasColumnType("int");
-
-                b.HasKey("Id");
-
-                b.HasIndex("UserId", "Purpose")
-                    .IsUnique();
-
-                b.ToTable("VerificationCodes");
-            });
-
         modelBuilder.Entity("MaintARBackend.Models.Component", b =>
             {
                 b.HasOne("MaintARBackend.Models.Equipment", "Equipment")
@@ -605,6 +620,17 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
                     .IsRequired();
 
                 b.Navigation("EquipmentType");
+            });
+
+        modelBuilder.Entity("MaintARBackend.Models.EmailVerificationCodeModel", b =>
+            {
+                b.HasOne("MaintARBackend.Models.User", "User")
+                    .WithOne()
+                    .HasForeignKey("MaintARBackend.Models.EmailVerificationCodeModel", "UserId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.Navigation("User");
             });
 
         modelBuilder.Entity("MaintARBackend.Models.Equipment", b =>
@@ -682,11 +708,11 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
                 b.Navigation("User");
             });
 
-        modelBuilder.Entity("MaintARBackend.Models.VerificationCode", b =>
+        modelBuilder.Entity("MaintARBackend.Models.ResetPasswordCodeModel", b =>
             {
                 b.HasOne("MaintARBackend.Models.User", "User")
-                    .WithMany()
-                    .HasForeignKey("UserId")
+                    .WithOne()
+                    .HasForeignKey("MaintARBackend.Models.ResetPasswordCodeModel", "UserId")
                     .OnDelete(DeleteBehavior.Cascade)
                     .IsRequired();
 

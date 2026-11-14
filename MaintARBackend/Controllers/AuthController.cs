@@ -1,125 +1,229 @@
 using System.Security.Claims;
-using MaintARBackend.Models.Auth;
-using MaintARBackend.Services.Auth;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using MaintARBackend.Context;
+using MaintARBackend.Models;
+using MaintARBackend.Services.Auth;
+using MaintARBackend.Services.Email;
 
-namespace MaintARBackend.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class AuthController : ControllerBase
+namespace MaintARBackend.Controllers
 {
-    private readonly IAuthService _authService;
-
-    public AuthController(IAuthService authService)
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AuthController : ControllerBase
     {
-        _authService = authService;
-    }
+        private readonly AppDbContext _db;
+        private readonly IJwtTokenService _jwtTokenService;
+        private readonly IPasswordService _passwordService;
+        private readonly IUserService _userService;
+        private readonly IEmailVerificationService _emailVerificationService;
+        private readonly IPasswordResetService _passwordResetService;
+        private readonly IEmailService _emailService;
 
-    [HttpPost("register")]
-    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
-    {
-        var response = await _authService.RegisterAsync(request);
-
-        if (response == null)
+        public AuthController(
+            AppDbContext db,
+            IJwtTokenService jwtTokenService,
+            IPasswordService passwordService,
+            IUserService userService,
+            IEmailVerificationService emailVerificationService,
+            IPasswordResetService passwordResetService,
+            IEmailService emailService)
         {
-            return Conflict(new { error = "Пользователь с такой почтой уже существует" });
+            _db = db;
+            _jwtTokenService = jwtTokenService;
+            _passwordService = passwordService;
+            _userService = userService;
+            _emailVerificationService = emailVerificationService;
+            _passwordResetService = passwordResetService;
+            _emailService = emailService;
         }
 
-        return Ok(response);
-    }
-
-    [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request)
-    {
-        var response = await _authService.LoginAsync(request);
-
-        if (response == null)
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] RegisterModel model)
         {
-            return Unauthorized(new { error = "Неверная почта или пароль" });
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            if (await _userService.EmailExistsAsync(model.Email))
+            {
+                return Conflict("User with this email already exists");
+            }
+
+            var entity = new User
+            {
+                UserName = model.UserName,
+                Email = model.Email,
+                PasswordHash = string.Empty
+            };
+            entity.PasswordHash = _passwordService.HashPassword(entity, model.Password);
+
+            _db.Users.Add(entity);
+            await _db.SaveChangesAsync();
+
+            var token = CreateToken(entity);
+
+            return Ok(new
+            {
+                Token = token,
+                entity.UserName,
+                entity.Email
+            });
         }
 
-        return Ok(response);
-    }
-
-    /// <summary>Данные текущего пользователя по токену.</summary>
-    [Authorize]
-    [HttpGet("me")]
-    public async Task<IActionResult> Me()
-    {
-        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginModel model)
         {
-            return Unauthorized();
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == model.Email);
+
+            if (user == null)
+            {
+                return Unauthorized("Invalid email or password");
+            }
+
+            var result = _passwordService.VerifyPassword(user, user.PasswordHash, model.Password);
+
+            if (result == PasswordVerificationResult.Failed)
+            {
+                return Unauthorized("Invalid email or password");
+            }
+
+            var token = CreateToken(user);
+
+            return Ok(new
+            {
+                Token = token,
+                user.UserName,
+                user.Email
+            });
         }
 
-        var user = await _authService.GetUserAsync(userId);
-
-        if (user == null)
+        [Authorize]
+        [HttpPost("send-verification-code")]
+        public async Task<IActionResult> SendVerificationCode()
         {
-            return Unauthorized();
+            var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+            {
+                return BadRequest("User not found");
+            }
+
+            var code = await _emailVerificationService.GenerateCodeAsync(user);
+
+            await _emailService.SendEmailAsync(new EmailDto
+            {
+                To = user.Email,
+                Subject = "Код подтверждения почты",
+                Body = code,
+                TemplateType = EmailTemplateType.EmailVerification
+            });
+
+            return Ok("Verification code has been sent");
         }
 
-        return Ok(new { user.Id, user.UserName, user.Email, user.IsEmailVerified });
-    }
-
-    /// <summary>Отправляет код подтверждения на почту текущего пользователя.</summary>
-    [Authorize]
-    [HttpPost("send-verification-code")]
-    public async Task<IActionResult> SendVerificationCode()
-    {
-        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+        [Authorize]
+        [HttpPost("verify-email")]
+        public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailModel model)
         {
-            return Unauthorized();
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+            {
+                return BadRequest("Invalid or expired code");
+            }
+
+            var success = await _emailVerificationService.VerifyCodeAsync(user, model.Code);
+
+            if (!success)
+            {
+                return BadRequest("Invalid or expired code");
+            }
+
+            // Новый токен уже с email_verified = true, старый остаётся с false.
+            return Ok(new
+            {
+                Message = "Email verified successfully",
+                Token = CreateToken(user)
+            });
         }
 
-        var result = await _authService.SendVerificationCodeAsync(userId);
-
-        return result switch
+        private string CreateToken(User user)
         {
-            SendCodeResult.Sent => Ok(new { message = "Код отправлен на почту" }),
-            SendCodeResult.AlreadyVerified => BadRequest(new { error = "Почта уже подтверждена" }),
-            SendCodeResult.TooManyRequests => StatusCode(
-                StatusCodes.Status429TooManyRequests,
-                new { error = "Код уже отправлен. Повторно запросить можно через минуту" }),
-            _ => Unauthorized()
-        };
-    }
-
-    [Authorize]
-    [HttpPost("verify-email")]
-    public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request)
-    {
-        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
-        {
-            return Unauthorized();
+            return _jwtTokenService.GenerateToken(
+                user.Id.ToString(),
+                user.UserName,
+                [new Claim("email_verified", user.IsEmailVerified ? "true" : "false")]);
         }
 
-        if (!await _authService.VerifyEmailAsync(userId, request.Code))
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordModel model)
         {
-            return BadRequest(new { error = "Неверный или просроченный код" });
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == model.Email);
+
+            if (user != null)
+            {
+                var code = await _passwordResetService.GenerateCodeAsync(user);
+
+                await _emailService.SendEmailAsync(new EmailDto
+                {
+                    To = user.Email,
+                    Subject = "Восстановление пароля",
+                    Body = code,
+                    TemplateType = EmailTemplateType.ResetPassword
+                });
+            }
+
+            return Ok("If this email is registered, a reset link has been sent");
         }
 
-        return Ok(new { message = "Почта подтверждена" });
-    }
-
-    [HttpPost("forgot-password")]
-    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
-    {
-        await _authService.ForgotPasswordAsync(request.Email);
-
-        // Ответ одинаковый для любой почты, чтобы нельзя было узнать, зарегистрирована ли она.
-        return Ok(new { message = "Если такая почта зарегистрирована, на неё отправлен код" });
-    }
-
-    [HttpPost("reset-password")]
-    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
-    {
-        if (!await _authService.ResetPasswordAsync(request))
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordModel model)
         {
-            return BadRequest(new { error = "Неверный или просроченный код" });
-        }
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
 
-        return Ok(new { message = "Пароль изменён" });
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == model.Email);
+
+            if (user == null)
+            {
+                return BadRequest("Invalid or expired code");
+            }
+
+            var isValid = await _passwordResetService.VerifyCodeAsync(user, model.Code);
+
+            if (!isValid)
+            {
+                return BadRequest("Invalid or expired code");
+            }
+
+            await _passwordResetService.ResetPasswordAsync(user, model.NewPassword);
+
+            return Ok("Password has been reset");
+        }
     }
 }

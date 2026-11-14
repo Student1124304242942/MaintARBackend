@@ -1,34 +1,34 @@
 using System.Text.Json;
 
-namespace MaintARBackend.Middleware;
-
-/// <summary>Ловит необработанные исключения и отдаёт клиенту аккуратный ответ 500 вместо подробностей ошибки.</summary>
-public class ExceptionHandlingMiddleware
+namespace MaintARBackend.Middleware
 {
-    private readonly RequestDelegate _next;
-    private readonly ILogger<ExceptionHandlingMiddleware> _logger;
-
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    public class ExceptionHandlingMiddleware
     {
-        _next = next;
-        _logger = logger;
-    }
+        private readonly RequestDelegate _next;
+        private readonly ILogger<ExceptionHandlingMiddleware> _logger;
 
-    public async Task InvokeAsync(HttpContext context)
-    {
-        try
+        public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
         {
-            await _next(context);
+            _next = next;
+            _logger = logger;
         }
-        catch (Exception ex)
+
+        public async Task InvokeAsync(HttpContext context)
         {
-            _logger.LogError(ex, "Unhandled exception");
+            try
+            {
+                await _next(context);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unhandled exception");
 
-            context.Response.ContentType = "application/json";
-            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                context.Response.ContentType = "application/json";
+                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
 
-            var response = new { error = "Что-то пошло не так. Попробуйте позже." };
-            await context.Response.WriteAsync(JsonSerializer.Serialize(response));
+                var response = new { error = "Something went wrong. Please try again later." };
+                await context.Response.WriteAsync(JsonSerializer.Serialize(response));
+            }
         }
     }
 }

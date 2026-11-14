@@ -11,7 +11,9 @@ public class AppDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
 
-    public DbSet<VerificationCode> VerificationCodes => Set<VerificationCode>();
+    public DbSet<EmailVerificationCodeModel> EmailVerificationCodes => Set<EmailVerificationCodeModel>();
+
+    public DbSet<ResetPasswordCodeModel> ResetPasswordCodes => Set<ResetPasswordCodeModel>();
 
     public DbSet<EquipmentType> EquipmentTypes => Set<EquipmentType>();
 
@@ -41,13 +43,25 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<InspectionFinding>().Property(f => f.Category).HasConversion<string>().HasMaxLength(30);
         modelBuilder.Entity<MaintenanceRecord>().Property(m => m.Type).HasConversion<string>().HasMaxLength(30);
 
-        // Пользователь -> коды из писем. Один действующий код на каждое назначение.
-        modelBuilder.Entity<VerificationCode>().Property(c => c.Purpose).HasConversion<string>().HasMaxLength(30);
-        modelBuilder.Entity<VerificationCode>().HasIndex(c => new { c.UserId, c.Purpose }).IsUnique();
-        modelBuilder.Entity<VerificationCode>()
-            .HasOne(c => c.User)
-            .WithMany()
-            .HasForeignKey(c => c.UserId)
+        // Коды из писем: как в neuronBakcend, по одной строке на пользователя в каждой таблице.
+        modelBuilder.Entity<EmailVerificationCodeModel>()
+            .HasIndex(e => e.UserId)
+            .IsUnique();
+
+        modelBuilder.Entity<EmailVerificationCodeModel>()
+            .HasOne(e => e.User)
+            .WithOne()
+            .HasForeignKey<EmailVerificationCodeModel>(e => e.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ResetPasswordCodeModel>()
+            .HasIndex(r => r.UserId)
+            .IsUnique();
+
+        modelBuilder.Entity<ResetPasswordCodeModel>()
+            .HasOne(r => r.User)
+            .WithOne()
+            .HasForeignKey<ResetPasswordCodeModel>(r => r.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
         // Тип оборудования -> оборудование и дефекты.
